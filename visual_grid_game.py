@@ -1,5 +1,9 @@
 import random
 import tkinter as tk
+from collections import deque
+import heapq
+import random
+import tkinter as tk
 
 
 class VisualGridHuntGame:
@@ -49,31 +53,52 @@ class VisualGridHuntGame:
     def get_percept(self) -> dict:
         dx, dy = self.dirs[self.agent_dir_idx]
         ahead_x, ahead_y = self.agent_pos[0] + dx, self.agent_pos[1] + dy
-        wall_ahead = (ahead_x < 0 or ahead_x >= self.width or 
-                      ahead_y < 0 or ahead_y >= self.height or 
-                      (ahead_x, ahead_y) in self.walls)
+
+        wall_ahead = (
+            ahead_x < 0 or
+            ahead_x >= self.width or
+            ahead_y < 0 or
+            ahead_y >= self.height or
+            (ahead_x, ahead_y) in self.walls
+        )
 
         left_dir = (self.agent_dir_idx - 1) % 4
         lx, ly = self.dirs[left_dir]
         left_x, left_y = self.agent_pos[0] + lx, self.agent_pos[1] + ly
-        wall_left = (left_x < 0 or left_x >= self.width or 
-                     left_y < 0 or left_y >= self.height or 
-                     (left_x, left_y) in self.walls)
+
+        wall_left = (
+            left_x < 0 or
+            left_x >= self.width or
+            left_y < 0 or
+            left_y >= self.height or
+            (left_x, left_y) in self.walls
+        )
 
         right_dir = (self.agent_dir_idx + 1) % 4
         rx, ry = self.dirs[right_dir]
         right_x, right_y = self.agent_pos[0] + rx, self.agent_pos[1] + ry
-        wall_right = (right_x < 0 or right_x >= self.width or 
-                      right_y < 0 or right_y >= self.height or 
-                      (right_x, right_y) in self.walls)
+
+        wall_right = (
+            right_x < 0 or
+            right_x >= self.width or
+            right_y < 0 or
+            right_y >= self.height or
+            (right_x, right_y) in self.walls
+        )
 
         return {
             'wall_ahead': wall_ahead,
             'wall_left': wall_left,
             'wall_right': wall_right,
-            'food_here': tuple(self.agent_pos) in self.food_positions
-        }
+            'food_here': tuple(self.agent_pos) in self.food_positions,
 
+            # Global state required for search
+            'grid_size': (self.width, self.height),
+            'walls': list(self.walls),
+            'all_food': list(self.food_positions),
+            'agent_pos': list(self.agent_pos),
+            'agent_dir_idx': self.agent_dir_idx
+        }
     def execute_action(self, action: str):
         self.steps += 1
 
@@ -193,6 +218,360 @@ class ModelBasedAgent:
         self.last_action = action
         return action
 
+class SearchAgent:
+
+    def __init__(self):
+        self.plan = []
+        self.active_algo = 'UCS'
+
+        # Internal position/orientation tracking
+        self.position = (0, 0)
+        self.dir_idx = 0
+
+    # ---------------------------------------------------------
+    # Generate valid neighbouring states
+    # ---------------------------------------------------------
+    def _neighbors(self, state, grid_size, walls):
+        x, y = state
+        width, height = grid_size
+
+        moves = [
+            ('Up', (x, y + 1)),
+            ('Right', (x + 1, y)),
+            ('Down', (x, y - 1)),
+            ('Left', (x - 1, y))
+        ]
+
+        for action, next_state in moves:
+
+            nx, ny = next_state
+
+            if (
+                0 <= nx < width and
+                0 <= ny < height and
+                next_state not in walls
+            ):
+                yield action, next_state
+
+    # ---------------------------------------------------------
+    # Reconstruct coordinate path
+    # ---------------------------------------------------------
+    def _reconstruct_path(self, parents, goal):
+        path = []
+        current = goal
+
+        while parents[current][0] is not None:
+            parent, action = parents[current]
+
+            path.append(action)
+            current = parent
+
+        path.reverse()
+
+        return path
+
+    # ---------------------------------------------------------
+    # BFS
+    # ---------------------------------------------------------
+    def bfs_search(self, start, goal, grid_size, walls):
+
+        frontier = deque([start])
+
+        reached = {start}
+
+        parents = {
+            start: (None, None)
+        }
+
+        while frontier:
+
+            current = frontier.popleft()
+
+            if current == goal:
+                return self._reconstruct_path(
+                    parents,
+                    goal
+                )
+
+            for action, next_state in self._neighbors(
+                current,
+                grid_size,
+                walls
+            ):
+
+                if next_state not in reached:
+
+                    reached.add(next_state)
+
+                    parents[next_state] = (
+                        current,
+                        action
+                    )
+
+                    frontier.append(next_state)
+
+        return []
+
+    # ---------------------------------------------------------
+    # DFS
+    # ---------------------------------------------------------
+    def dfs_search(self, start, goal, grid_size, walls):
+
+        frontier = [start]
+
+        reached = {start}
+
+        parents = {
+            start: (None, None)
+        }
+
+        while frontier:
+
+            current = frontier.pop()
+
+            if current == goal:
+                return self._reconstruct_path(
+                    parents,
+                    goal
+                )
+
+            for action, next_state in self._neighbors(
+                current,
+                grid_size,
+                walls
+            ):
+
+                if next_state not in reached:
+
+                    reached.add(next_state)
+
+                    parents[next_state] = (
+                        current,
+                        action
+                    )
+
+                    frontier.append(next_state)
+
+        return []
+
+    # ---------------------------------------------------------
+    # UCS
+    # ---------------------------------------------------------
+    def ucs_search(self, start, goal, grid_size, walls):
+
+        frontier = []
+
+        counter = 0
+
+        heapq.heappush(
+            frontier,
+            (0, counter, start)
+        )
+
+        reached = {
+            start: 0
+        }
+
+        parents = {
+            start: (None, None)
+        }
+
+        while frontier:
+
+            cost, _, current = heapq.heappop(frontier)
+
+            if cost != reached[current]:
+                continue
+
+            if current == goal:
+
+                return self._reconstruct_path(
+                    parents,
+                    goal
+                )
+
+            for action, next_state in self._neighbors(
+                current,
+                grid_size,
+                walls
+            ):
+
+                new_cost = cost + 1
+
+                if (
+                    next_state not in reached
+                    or new_cost < reached[next_state]
+                ):
+
+                    reached[next_state] = new_cost
+
+                    parents[next_state] = (
+                        current,
+                        action
+                    )
+
+                    counter += 1
+
+                    heapq.heappush(
+                        frontier,
+                        (
+                            new_cost,
+                            counter,
+                            next_state
+                        )
+                    )
+
+        return []
+
+    # ---------------------------------------------------------
+    # Find closest food
+    # ---------------------------------------------------------
+    def _closest_food(self, start, food_positions):
+
+        if not food_positions:
+            return None
+
+        return min(
+            food_positions,
+            key=lambda food:
+                abs(start[0] - food[0])
+                +
+                abs(start[1] - food[1])
+        )
+
+    # ---------------------------------------------------------
+    # Convert movement direction into actual game actions
+    # ---------------------------------------------------------
+    def _movement_to_actions(self, movement_path):
+
+        actions = []
+
+        current_dir = self.dir_idx
+
+        direction_map = {
+            'Up': 0,
+            'Right': 1,
+            'Down': 2,
+            'Left': 3
+        }
+
+        for movement in movement_path:
+
+            target_dir = direction_map[movement]
+
+            # Calculate clockwise rotation
+            right_turns = (
+                target_dir - current_dir
+            ) % 4
+
+            # Calculate counter-clockwise rotation
+            left_turns = (
+                current_dir - target_dir
+            ) % 4
+
+            if left_turns <= right_turns:
+
+                for _ in range(left_turns):
+
+                    actions.append('turn_left')
+
+                current_dir = target_dir
+
+            else:
+
+                for _ in range(right_turns):
+
+                    actions.append('turn_right')
+
+                current_dir = target_dir
+
+            actions.append('move_forward')
+
+        return actions
+
+    # ---------------------------------------------------------
+    # Main agent function
+    # ---------------------------------------------------------
+    def sense_and_act(self, percept):
+
+        # Update internal state from percept
+        self.position = tuple(
+            percept['agent_pos']
+        )
+
+        self.dir_idx = percept['agent_dir_idx']
+
+        # Create a new plan when current plan is empty
+        if not self.plan:
+
+            food_positions = [
+                tuple(food)
+                for food in percept['all_food']
+            ]
+
+            if not food_positions:
+                return 'suck'
+
+            start = self.position
+
+            goal = self._closest_food(
+                start,
+                food_positions
+            )
+
+            grid_size = percept['grid_size']
+
+            walls = {
+                tuple(wall)
+                for wall in percept['walls']
+            }
+
+            # Run selected search algorithm
+            if self.active_algo == 'BFS':
+
+                movement_path = self.bfs_search(
+                    start,
+                    goal,
+                    grid_size,
+                    walls
+                )
+
+            elif self.active_algo == 'DFS':
+
+                movement_path = self.dfs_search(
+                    start,
+                    goal,
+                    grid_size,
+                    walls
+                )
+
+            elif self.active_algo == 'UCS':
+
+                movement_path = self.ucs_search(
+                    start,
+                    goal,
+                    grid_size,
+                    walls
+                )
+
+            else:
+
+                raise ValueError(
+                    f"Unknown algorithm: {self.active_algo}"
+                )
+
+            # Convert coordinate movements
+            # into actual game actions
+            self.plan = self._movement_to_actions(
+                movement_path
+            )
+
+        # Execute next action
+        if self.plan:
+
+            return self.plan.pop(0)
+
+        return 'suck'
 
 class GridGameGUI:
     def __init__(self, root, width=10, height=10, num_food=12, num_opponents=2, num_traps=3, walls=None, agent_type="model"):
@@ -203,8 +582,17 @@ class GridGameGUI:
 
         if agent_type == "reflex":
             self.agent = SimpleReflexAgent()
+
+        elif agent_type == "model":
+             self.agent = ModelBasedAgent()
+
+        elif agent_type == "search":
+            self.agent = SearchAgent()
+
         else:
-            self.agent = ModelBasedAgent()
+             raise ValueError(
+                f"Unknown agent type: {agent_type}"
+    )
 
         max_canvas_dim = 600
         self.cell_size = max(20, min(max_canvas_dim // self.env.width, max_canvas_dim // self.env.height))
@@ -290,5 +678,5 @@ class GridGameGUI:
 if __name__ == "__main__":
     root = tk.Tk()
     # Change agent_type to "reflex" to demonstrate failure/trap loop, or "model" to run ModelBasedAgent
-    app = GridGameGUI(root, width=12, height=12, num_food=15, num_opponents=0, num_traps=4, agent_type="model")
+    app = GridGameGUI(root, width=12, height=12, num_food=15, num_opponents=0, num_traps=4, agent_type="search")
     root.mainloop()

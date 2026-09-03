@@ -1,5 +1,6 @@
 import random
 import tkinter as tk
+from agent import SearchAgent as LabSearchAgent
 from collections import deque
 import heapq
 import random
@@ -574,7 +575,7 @@ class SearchAgent:
         return 'suck'
 
 class GridGameGUI:
-    def __init__(self, root, width=10, height=10, num_food=12, num_opponents=2, num_traps=3, walls=None, agent_type="model"):
+    def __init__(self, root, width=10, height=10, num_food=12, num_opponents=2, num_traps=3, walls=None, agent_type="search"):
         self.root = root
         self.root.title("IT3012 - Partially Observable Agent Grid Hunt")
 
@@ -587,7 +588,8 @@ class GridGameGUI:
              self.agent = ModelBasedAgent()
 
         elif agent_type == "search":
-            self.agent = SearchAgent()
+            self.agent = LabSearchAgent()
+            self.agent.active_algo = 'AStar'
 
         else:
              raise ValueError(
